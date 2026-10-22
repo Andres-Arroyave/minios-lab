@@ -56,6 +56,30 @@ static void unblock_alarm(void) {
     sigprocmask(SIG_UNBLOCK, &alarm_mask, NULL);
 }
 
+static void refresh_wait_times(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int running = scheduler_get_running();
+
+    for (int i = 0; i < process_count; i++) {
+        pcb_t *pcb = &process_table[i];
+        if (pcb->state == PROC_TERMINATED) {
+            continue;
+        }
+
+        double elapsed_ms = timespec_diff_ms(now, pcb->created_at);
+        double cpu_ms = pcb->cpu_time_ms;
+        if (i == running && pcb->state == PROC_RUNNING) {
+            cpu_ms += timespec_diff_ms(now, pcb->last_started);
+        }
+
+        pcb->wait_time_ms = elapsed_ms - cpu_ms;
+        if (pcb->wait_time_ms < 0.0) {
+            pcb->wait_time_ms = 0.0;
+        }
+    }
+}
+
 static void cmd_help(void) {
     printf("\nComandos disponibles:\n");
     printf("  run <binario>       Lanzar un proceso nuevo\n");
@@ -247,6 +271,8 @@ static void cmd_ps(void) {
         return;
     }
 
+    refresh_wait_times();
+
     // Paso 3.
     printf("\n");
     pcb_print_table();
@@ -287,6 +313,7 @@ static void cmd_kill_proc(const char *arg) {
 
     // Paso 3.
     block_alarm();
+    refresh_wait_times();
 
     int found = 0;
     // Paso 4.
@@ -342,6 +369,8 @@ static void cmd_stats(void) {
     int active = 0, terminated = 0;
     double total_cpu = 0, total_wait = 0;
     int total_switches = 0;
+
+    refresh_wait_times();
 
     // Paso 3.
     for (int i = 0; i < process_count; i++) {
